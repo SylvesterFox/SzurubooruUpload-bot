@@ -20,6 +20,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("szurubooru_bot")
 
 ALLOWED_EXTENSIONS = {".jpg", ".png", ".webm", ".mp4", ".swf", ".avif", ".heif", ".heic"}
@@ -58,12 +59,12 @@ def extract_link(text: str) -> str | None:
 
 
 def caption_tags(text: str) -> list[str]:
-    """Treat words and #hashtags as tags; omit URLs and remove the # prefix."""
+    """Extract only hashtags, omitting URLs and the leading # marker."""
     text = re.sub(r"https?://[^\s<>]+", " ", text or "")
     tags = []
-    for word in re.split(r"[\s,]+", text):
-        tag = word.lstrip("#").strip(".,!?:;()[]{}")
-        if tag and not tag.startswith("#"):
+    for match in re.finditer(r"#([^\s#]+)", text):
+        tag = match.group(1).strip(".,!?:;()[]{}<>\"'")
+        if tag:
             tags.append(tag)
     return list(dict.fromkeys(tags))
 
@@ -84,7 +85,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     await update.effective_message.reply_text(
         "Отправьте файл как документ или медиа. Поддерживаются JPG, PNG, WEBM, MP4, SWF, AVIF, HEIF и HEIC.\n"
-        "Подпись используется как список тегов через пробел. Без тегов запись создаётся без тегов.\n"
+        "В теги попадут только слова с # в подписи (например, #fox #blue_eyes); без хештегов добавятся только найденные e621 теги.\n"
         "Команды: /help"
     )
 
@@ -374,7 +375,14 @@ def main() -> None:
     if SAFETY not in {"safe", "sketchy", "unsafe"}:
         raise SystemExit("DEFAULT_SAFETY должен быть safe, sketchy или unsafe")
     api_auth()
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .connect_timeout(30)
+        .get_updates_connect_timeout(30)
+        .bootstrap_retries(5)
+        .build()
+    )
     app.bot_data["upload_semaphore"] = SemaphoreRunner()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
